@@ -1,5 +1,5 @@
 
-# Does-GenAI-Help
+# Hypothesis Generation via EMM and Contrastive Analysis
 <img width="1024" height="768" alt="graphicalabstractnew" src="https://github.com/user-attachments/assets/a0156e97-b40d-4343-bda1-a996d3e08ba7" />
 
 This repository is built for the paper
