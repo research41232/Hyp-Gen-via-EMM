@@ -63,6 +63,7 @@ class SEMTarget(BaseTarget):
         mask = cover_arr.representation if hasattr(cover_arr, "representation") else cover_arr
         mask = np.asarray(mask)
         sg_data = data.iloc[np.where(mask)[0]]
+        sg_complement = data.iloc[np.where(~mask)[0]]
         size_ds = len(data)
 
         
@@ -72,7 +73,7 @@ class SEMTarget(BaseTarget):
             model_sg = model_sg.rename(columns={"p>|t|": "p", "std error": "std_e"})
             
 
-            pls_ds = Plspm(data, self.config, Scheme.PATH, 1000, 0.00000001, False)
+            pls_ds = Plspm(sg_complement, self.config, Scheme.PATH, 1000, 0.00000001, False)
             model_ds = pls_ds.inner_model()
             model_ds = model_ds.rename(columns={"p>|t|": "p_ds", "estimate": "estimate_ds", "std error": "std_e_ds"})
 
@@ -221,95 +222,7 @@ class SEMQF(AbstractInterestingnessMeasure):
     def optimistic_estimate(self, subgroup, target, data, statistics=None):
         statistics = self.ensure_statistics(subgroup, target, data, statistics)
         return statistics.quality
-
-class SEMQFEntropyCI(AbstractInterestingnessMeasure):
-    """
-    Rewards paths for which the SG path estimate confidence interval is completely non-overlapping with the global model path estimate confidence interval. 
-    Sg size moderated by entropy measure. Does not require min sg size to be defined. 
-    Only sg with >=20 elements are considered due to PLS SEM restrictions.
-    Requires z for CI. 
-    """
-    tpl = namedtuple("SEMQFEntropyCI_tpl", ["changes_sig_sg", "flip_sign_sg", "quality", "size_sg"])
-
-    def __init__(self, config, z):
-        self.config = config
-        self.z = z
-        self.has_constant_statistics = False
-        self.required_stat_attrs = self.tpl._fields
-        self.dataset_statistics = None
-
-    def calculate_constant_statistics(self, data, target):
-         size_dataset = len(data)
-         self.dataset_statistics = self.tpl(None, None, None, size_dataset)
-         self.has_constant_statistics = True
     
-    def calculate_statistics(self, subgroup, target, data, statistics=None):
-        cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
-
-        mask = cover_arr.representation if hasattr(cover_arr, "representation") else cover_arr
-        mask = np.asarray(mask)
-        sg_data = data.iloc[np.where(mask)[0]]
-
-        if size_sg >= 20:
-            try:
-                pls_sg = Plspm(sg_data, self.config, Scheme.PATH, 1000, 0.00000001, False)
-                model_sg = pls_sg.inner_model()
-                model_sg = model_sg.rename(columns={"p>|t|": "p", "std error": "std_e"})
-                
-
-                pls_ds = Plspm(data, self.config, Scheme.PATH, 1000, 0.00000001, False)
-                model_ds = pls_ds.inner_model()
-                model_ds = model_ds.rename(columns={"p>|t|": "p_ds", "estimate": "estimate_ds", "std error": "std_e_ds"})
-                
-
-                joint_model = model_ds.copy()
-                joint_model[["estimate", "p", "std_e"]] = model_sg[["estimate", "p", "std_e"]]
-                joint_model["lower_ci"] = joint_model["estimate"] - self.z * joint_model["std_e"]
-                joint_model["upper_ci"] = joint_model["estimate"] + self.z * joint_model["std_e"]
-                joint_model["lower_ci_ds"] = joint_model["estimate_ds"] - self.z * joint_model["std_e_ds"]
-                joint_model["upper_ci_ds"] = joint_model["estimate_ds"] + self.z * joint_model["std_e_ds"]
-                disjoint_ci_count = 0
-                flip_sign_sg = 0
-
-                for _, row in joint_model.iterrows():
-                    if (row["upper_ci"] < row["lower_ci_ds"] or row["upper_ci_ds"] < row["lower_ci"]):
-                        disjoint_ci_count += 1
-
-                    if ((row["p"] <= 0.05 and row["p_ds"] <= 0.05) and
-                        (np.sign(row["estimate"]) * np.sign(row["estimate_ds"]) == -1)):
-                        flip_sign_sg += 1
-                
-                p = size_sg / len(data)
-                if (p == 0 or p==1):
-                    quality = 0
-                    entropy_size = 0
-                else:
-                    entropy_size = -p * np.log(p) - (1 - p) * np.log(1 - p)
-                    quality = entropy_size * disjoint_ci_count
-
-                
-            except Exception:
-                return self.tpl(0, 0, 0, size_sg)
-
-        else:
-            disjoint_ci_count = 0
-            flip_sign_sg = 0
-            quality = 0
-            entropy_size = 0
-
-        print("disjoint_ci_count = ", disjoint_ci_count)
-        print("entropy_size = ", entropy_size)
-        print("quality = ", quality)
-            
-        return self.tpl(disjoint_ci_count, flip_sign_sg, quality, size_sg)
-    
-    def evaluate(self, subgroup, target, data, statistics=None):
-        statistics = self.ensure_statistics(subgroup, target, data, statistics)
-        return statistics.quality
-
-    def optimistic_estimate(self, subgroup, target, data, statistics=None):
-        statistics = self.ensure_statistics(subgroup, target, data, statistics)
-        return statistics.quality
 
 class SEMQFNewSig(AbstractInterestingnessMeasure):
     """
@@ -454,6 +367,268 @@ class SEMQFEntropy(AbstractInterestingnessMeasure):
             quality = 0
             
         return self.tpl(changes_sig_sg, flip_sign_sg, quality, size_sg)
+    
+    def evaluate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+
+    def optimistic_estimate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+
+class SEMQFEntropyCIBoot(AbstractInterestingnessMeasure):
+    """
+    *CIs based on bootstrapping!
+    Rewards paths for which the SG path estimate confidence interval is completely non-overlapping with the global model path estimate confidence interval. 
+    Sg size moderated by entropy measure. Does not require min sg size to be defined. 
+    Only sg with >=20 elements are considered due to PLS SEM restrictions.
+    """
+    tpl = namedtuple("SEMQFEntropyCI_tpl", ["changes_sig_sg", "flip_sign_sg", "quality", "size_sg"])
+
+    def __init__(self, config):
+        self.config = config
+        self.has_constant_statistics = False
+        self.required_stat_attrs = self.tpl._fields
+        self.dataset_statistics = None
+
+    def calculate_constant_statistics(self, data, target):
+         size_dataset = len(data)
+         self.dataset_statistics = self.tpl(None, None, None, size_dataset)
+         self.has_constant_statistics = True
+    
+    def calculate_statistics(self, subgroup, target, data, statistics=None):
+        cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
+
+        mask = cover_arr.representation if hasattr(cover_arr, "representation") else cover_arr
+        mask = np.asarray(mask)
+        sg_data = data.iloc[np.where(mask)[0]]
+
+        if size_sg >= 20:
+            try:
+                pls_sg = Plspm(sg_data, self.config, Scheme.PATH, 100, 0.00000001, True)
+                model_sg = pls_sg.inner_model()
+                model_sg = model_sg.rename(columns={"p>|t|": "p"})
+                boot_sg = pls_sg.bootstrap().paths()
+                boot_sg = boot_sg.rename(columns={"perc.025": "lower_ci", "perc.975": "upper_ci"})
+                model_sg = model_sg.join(boot_sg[["lower_ci", "upper_ci"]])
+
+                pls_ds = Plspm(data, self.config, Scheme.PATH, 100, 0.00000001, True)
+                model_ds = pls_ds.inner_model()
+                model_ds = model_ds.rename(columns={"p>|t|": "p_ds", "estimate": "estimate_ds"})
+                boot_ds = pls_ds.bootstrap().paths()
+                boot_ds = boot_ds.rename(columns={"perc.025": "lower_ci_ds", "perc.975": "upper_ci_ds"})
+                model_ds = model_ds.join(boot_ds[["lower_ci_ds", "upper_ci_ds"]])
+
+                joint_model = model_ds.copy()
+                joint_model[["estimate", "p", "lower_ci", "upper_ci"]] = model_sg[["estimate", "p", "lower_ci", "upper_ci"]]
+                changes_sig_sg = 0
+                flip_sign_sg = 0
+
+                for _, row in joint_model.iterrows():
+                    if (row["upper_ci"] < row["lower_ci_ds"] or row["upper_ci_ds"] < row["lower_ci"]):
+                        changes_sig_sg += 1
+
+                    if ((row["p"] <= 0.05 and row["p_ds"] <= 0.05) and
+                        (np.sign(row["estimate"]) * np.sign(row["estimate_ds"]) == -1)):
+                        flip_sign_sg += 1
+                
+                p = size_sg / len(data)
+                if (p == 0 or p==1):
+                    quality = 0
+                else:
+                    entropy_size = -p * np.log(p) - (1 - p) * np.log(1 - p)
+                    quality = entropy_size * changes_sig_sg
+                
+            except Exception:
+                return self.tpl(0, 0, 0, size_sg)
+
+        else:
+            changes_sig_sg = 0
+            flip_sign_sg = 0
+            quality = 0
+            
+        return self.tpl(changes_sig_sg, flip_sign_sg, quality, size_sg)
+    
+    def evaluate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+
+    def optimistic_estimate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+    
+class SEMQFEntropyCI(AbstractInterestingnessMeasure):
+    """
+    Rewards paths for which the SG path estimate confidence interval is completely non-overlapping with the global model path estimate confidence interval. 
+    Sg size moderated by entropy measure. Does not require min sg size to be defined. 
+    Only sg with >=20 elements are considered due to PLS SEM restrictions.
+    Requires z for CI. 
+    """
+    tpl = namedtuple("SEMQFEntropyCI_tpl", ["changes_sig_sg", "flip_sign_sg", "quality", "size_sg"])
+
+    def __init__(self, config, z):
+        self.config = config
+        self.z = z
+        self.has_constant_statistics = False
+        self.required_stat_attrs = self.tpl._fields
+        self.dataset_statistics = None
+
+    def calculate_constant_statistics(self, data, target):
+         size_dataset = len(data)
+         self.dataset_statistics = self.tpl(None, None, None, size_dataset)
+         self.has_constant_statistics = True
+    
+    def calculate_statistics(self, subgroup, target, data, statistics=None):
+        cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
+
+        mask = cover_arr.representation if hasattr(cover_arr, "representation") else cover_arr
+        mask = np.asarray(mask)
+        sg_data = data.iloc[np.where(mask)[0]]
+
+        if size_sg >= 20:
+            try:
+                pls_sg = Plspm(sg_data, self.config, Scheme.PATH, 1000, 0.00000001, False)
+                model_sg = pls_sg.inner_model()
+                model_sg = model_sg.rename(columns={"p>|t|": "p", "std error": "std_e"})
+                
+
+                pls_ds = Plspm(data, self.config, Scheme.PATH, 1000, 0.00000001, False)
+                model_ds = pls_ds.inner_model()
+                model_ds = model_ds.rename(columns={"p>|t|": "p_ds", "estimate": "estimate_ds", "std error": "std_e_ds"})
+                
+
+                joint_model = model_ds.copy()
+                joint_model[["estimate", "p", "std_e"]] = model_sg[["estimate", "p", "std_e"]]
+                joint_model["lower_ci"] = joint_model["estimate"] - self.z * joint_model["std_e"]
+                joint_model["upper_ci"] = joint_model["estimate"] + self.z * joint_model["std_e"]
+                joint_model["lower_ci_ds"] = joint_model["estimate_ds"] - self.z * joint_model["std_e_ds"]
+                joint_model["upper_ci_ds"] = joint_model["estimate_ds"] + self.z * joint_model["std_e_ds"]
+                disjoint_ci_count = 0
+                flip_sign_sg = 0
+
+                for _, row in joint_model.iterrows():
+                    if (row["upper_ci"] < row["lower_ci_ds"] or row["upper_ci_ds"] < row["lower_ci"]):
+                        disjoint_ci_count += 1
+
+                    if ((row["p"] <= 0.05 and row["p_ds"] <= 0.05) and
+                        (np.sign(row["estimate"]) * np.sign(row["estimate_ds"]) == -1)):
+                        flip_sign_sg += 1
+                
+                p = size_sg / len(data)
+                if (p == 0 or p==1):
+                    quality = 0
+                    entropy_size = 0
+                else:
+                    entropy_size = -p * np.log(p) - (1 - p) * np.log(1 - p)
+                    quality = entropy_size * disjoint_ci_count
+
+                
+            except Exception:
+                return self.tpl(0, 0, 0, size_sg)
+
+        else:
+            disjoint_ci_count = 0
+            flip_sign_sg = 0
+            quality = 0
+            entropy_size = 0
+
+        print("disjoint_ci_count = ", disjoint_ci_count)
+        print("entropy_size = ", entropy_size)
+        print("quality = ", quality)
+            
+        return self.tpl(disjoint_ci_count, flip_sign_sg, quality, size_sg)
+    
+    def evaluate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+
+    def optimistic_estimate(self, subgroup, target, data, statistics=None):
+        statistics = self.ensure_statistics(subgroup, target, data, statistics)
+        return statistics.quality
+    
+class SEMQFEntropyCIComplement(AbstractInterestingnessMeasure):
+    """
+    Rewards paths for which the SG path estimate confidence interval is completely non-overlapping with the global model path estimate confidence interval. 
+    Sg size moderated by entropy measure. Does not require min sg size to be defined. 
+    Only sg with >=20 elements are considered due to PLS SEM restrictions.
+    Requires z for CI. 
+    """
+    tpl = namedtuple("SEMQFEntropyCIComplement_tpl", ["changes_sig_sg", "flip_sign_sg", "quality", "size_sg"])
+
+    def __init__(self, config, z):
+        self.config = config
+        self.z = z
+        self.has_constant_statistics = False
+        self.required_stat_attrs = self.tpl._fields
+        self.dataset_statistics = None
+
+    def calculate_constant_statistics(self, data, target):
+         size_dataset = len(data)
+         self.dataset_statistics = self.tpl(None, None, None, size_dataset)
+         self.has_constant_statistics = True
+    
+    def calculate_statistics(self, subgroup, target, data, statistics=None):
+        cover_arr, size_sg = get_cover_array_and_size(subgroup, len(data), data)
+
+        mask = cover_arr.representation if hasattr(cover_arr, "representation") else cover_arr
+        mask = np.asarray(mask)
+        sg_data = data.iloc[np.where(mask)[0]]
+        sg_complement = data.iloc[np.where(~mask)[0]]
+
+        if size_sg >= 20:
+            try:
+                pls_sg = Plspm(sg_data, self.config, Scheme.PATH, 1000, 0.00000001, False)
+                model_sg = pls_sg.inner_model()
+                model_sg = model_sg.rename(columns={"p>|t|": "p", "std error": "std_e"})
+                
+
+                pls_ds = Plspm(sg_complement, self.config, Scheme.PATH, 1000, 0.00000001, False)
+                model_ds = pls_ds.inner_model()
+                model_ds = model_ds.rename(columns={"p>|t|": "p_ds", "estimate": "estimate_ds", "std error": "std_e_ds"})
+
+                
+                
+
+                joint_model = model_ds.copy()
+                joint_model[["estimate", "p", "std_e"]] = model_sg[["estimate", "p", "std_e"]]
+                joint_model["lower_ci"] = joint_model["estimate"] - self.z * joint_model["std_e"]
+                joint_model["upper_ci"] = joint_model["estimate"] + self.z * joint_model["std_e"]
+                joint_model["lower_ci_ds"] = joint_model["estimate_ds"] - self.z * joint_model["std_e_ds"]
+                joint_model["upper_ci_ds"] = joint_model["estimate_ds"] + self.z * joint_model["std_e_ds"]
+                disjoint_ci_count = 0
+                flip_sign_sg = 0
+
+                for _, row in joint_model.iterrows():
+                    if (row["upper_ci"] < row["lower_ci_ds"] or row["upper_ci_ds"] < row["lower_ci"]):
+                        disjoint_ci_count += 1
+
+                    if ((row["p"] <= 0.05 and row["p_ds"] <= 0.05) and
+                        (np.sign(row["estimate"]) * np.sign(row["estimate_ds"]) == -1)):
+                        flip_sign_sg += 1
+                
+                p = size_sg / len(data)
+                if (p == 0 or p==1):
+                    quality = 0
+                    entropy_size = 0
+                else:
+                    entropy_size = -p * np.log(p) - (1 - p) * np.log(1 - p)
+                    quality = entropy_size * disjoint_ci_count
+
+                
+            except Exception:
+                return self.tpl(0, 0, 0, size_sg)
+
+        else:
+            disjoint_ci_count = 0
+            flip_sign_sg = 0
+            quality = 0
+            entropy_size = 0
+
+        print("disjoint_ci_count = ", disjoint_ci_count)
+        print("entropy_size = ", entropy_size)
+        print("quality = ", quality)
+            
+        return self.tpl(disjoint_ci_count, flip_sign_sg, quality, size_sg)
     
     def evaluate(self, subgroup, target, data, statistics=None):
         statistics = self.ensure_statistics(subgroup, target, data, statistics)
