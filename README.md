@@ -1,9 +1,10 @@
+# From Exceptional Subgroups to Hypotheses
 
-# Hypothesis Generation via EMM and Contrastive Analysis
-<img width="1024" height="768" alt="graphicalabstractnew" src="https://github.com/user-attachments/assets/a0156e97-b40d-4343-bda1-a996d3e08ba7" />
+<img width="752" height="712" alt="graphcalabstractnew4" src="https://github.com/user-attachments/assets/b3c363c5-4636-433b-ade8-4c48035ec92d" />
+
 
 This repository is built for the paper
-*Hypothesis Generation via Exceptional Model Mining and Contrastive Analysis* .
+*From Exceptional Subgroups to Hypotheses: A Contrastive Analysis Approach* .
 
 ## Overview
 We present a discovery-oriented workflow that combines Partial Least Squares Structural Equation Modeling (PLS-SEM), EMM, and contrastive analysis to support hypothesis generation from observational data. Starting from a global SEM, it identifies subgroups with exceptional structural deviations and contrasts them against minimally different reference populations to distinguish isolated from conjunction-specific effects, enabling parsimonious interpretation. Using higher education observational data, we show that this workflow yields interpretable hypotheses about local structure that remain hidden in population-level analyses.
@@ -50,7 +51,7 @@ config = c.Config(structure.path(), default_scale=Scale.NUM)
 # all items corresponding to a construct must share a common prefix (e.g., "embracing_")
 # and be the same .Scale (if nonmetric).
 
-config.add_lv_with_columns_named("GenAI_Attitude", Mode.A, df, "embracing_")
+config.add_lv_with_columns_named("GenAI_Attitude", Mode.A, df, "attitude_")
 config.add_lv_with_columns_named("GenAI_Skill", Mode.A, df, "skill_")
 config.add_lv_with_columns_named("Study_Aid_Use", Mode.A, df, "study_aid_")
 config.add_lv_with_columns_named("Improve_Use", Mode.A, df, "improve_")
@@ -66,7 +67,7 @@ pls.inner_model()
 4. Use EMM to discover interpretable subgroups where the structural model deviates from the global pattern: 
     1. Select features to include in the descriptive space. In this work, we included observable attributes that are not elements of the structural model itself;
     2. Choose an appropriate depth (the maximum number of conditions that can describe a subgroup);
-    3. Choose an appropriate quality function and set the desired parameters. We provide a choice of several quality functions in [SEM_model_target.py](PLS-SEM-extension/SEM_model_target.py). In this work, we employ `SEMQFEntropyCI`, which rewards paths which have a statistically significant difference from the global model. Subgroup size is moderated by an entropy measure. 
+    3. Choose an appropriate quality function and set the desired parameters. We provide a choice of several quality functions in [SEM_model_target.py](PLS-SEM-extension/SEM_model_target.py). In this work, we employ `SEMQFEntropyCIComplement`, which rewards paths which have a statistically significant difference from the complement model. Subgroup size is moderated by an entropy measure. 
 ```
 import pysubgroup as ps
 all_cols = df.columns.tolist()
@@ -80,7 +81,7 @@ task = ps.SubgroupDiscoveryTask (
     searchspace,
     result_set_size=10,
     depth=5,
-    qf=ps.SEMQFEntropyCI(config, z=1.96))
+    qf=ps.SEMQFEntropyCIComplement(config, z=1.96))
 result = ps.DFS().execute(task)
 result_df = result.to_dataframe()
 ```
