@@ -1,10 +1,4 @@
-# From Exceptional Subgroups to Hypotheses
-
-<img width="752" height="712" alt="graphcalabstractnew4" src="https://github.com/user-attachments/assets/b3c363c5-4636-433b-ade8-4c48035ec92d" />
-
-
-This repository is built for the paper
-*From Exceptional Subgroups to Hypotheses: A Contrastive Analysis Approach* .
+ # Discovering Exceptional Subgroups from a PLS-SEM target model
 
 ## Overview
 We present a discovery-oriented workflow that combines Partial Least Squares Structural Equation Modeling (PLS-SEM), EMM, and contrastive analysis to support hypothesis generation from observational data. Starting from a global SEM, it identifies subgroups with exceptional structural deviations and contrasts them against minimally different reference populations to distinguish isolated from conjunction-specific effects, enabling parsimonious interpretation. Using higher education observational data, we show that this workflow yields interpretable hypotheses about local structure that remain hidden in population-level analyses.
